@@ -11,12 +11,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/api"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/config"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/dashboard"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/logging"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/metrics"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/store"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/api"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/config"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/dashboard"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/logging"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/metrics"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/store"
 )
 
 const (
