@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/job"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/store"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/job"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/store"
 )
 
 // listen subscribes to wake-ups and returns the channel of queue names once

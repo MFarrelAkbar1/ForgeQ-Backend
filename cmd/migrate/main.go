@@ -11,7 +11,7 @@ import (
 
 	"github.com/pressly/goose/v3"
 
-	"github.com/MFarrelAkbar1/ForgeQ/migrations"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/migrations"
 )
 
 func main() {

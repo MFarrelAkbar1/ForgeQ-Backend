@@ -10,9 +10,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/job"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/store"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/worker"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/job"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/store"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/worker"
 )
 
 func TestWorkerMetrics(t *testing.T) {

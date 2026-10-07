@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/job"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/store"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/job"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/store"
 )
 
 // fakeStore hands out queued jobs once and records outcomes.

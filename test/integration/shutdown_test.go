@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/job"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/store"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/worker"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/job"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/store"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/worker"
 )
 
 func shutdownWorker(s *store.Store, reg *worker.Registry, shutdownTimeout time.Duration) *worker.Worker {

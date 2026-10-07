@@ -14,10 +14,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/api"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/job"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/store"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/worker"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/api"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/job"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/store"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/worker"
 )
 
 const namespace = "forgeq"

@@ -1,6 +1,6 @@
 # ForgeQ
 
-[![CI](https://github.com/MFarrelAkbar1/ForgeQ/actions/workflows/ci.yml/badge.svg)](https://github.com/MFarrelAkbar1/ForgeQ/actions/workflows/ci.yml)
+[![CI](https://github.com/MFarrelAkbar1/ForgeQ-Backend/actions/workflows/ci.yml/badge.svg)](https://github.com/MFarrelAkbar1/ForgeQ-Backend/actions/workflows/ci.yml)
 
 ForgeQ is a distributed background job queue written in Go, in the spirit of Sidekiq or Celery. PostgreSQL is its only source of truth. Clients enqueue jobs over HTTP (send an email, resize an image, build a report). Any number of worker processes then claim the jobs with `SELECT … FOR UPDATE SKIP LOCKED`, run them with a lease and a heartbeat, retry failures with exponential backoff, and move jobs that keep failing to a dead-letter queue. An htmx dashboard, Prometheus metrics and a load and chaos generator come with it.
 

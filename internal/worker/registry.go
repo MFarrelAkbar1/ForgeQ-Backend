@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/job"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/job"
 )
 
 // HandlerFunc processes one job. Returning nil marks the job succeeded; any

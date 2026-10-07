@@ -14,11 +14,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/auth"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/dashboard"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/job"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/ops"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/store"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/auth"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/dashboard"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/job"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/ops"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/store"
 )
 
 // Store is the persistence the API depends on; *store.Store implements it.

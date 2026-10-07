@@ -1,4 +1,4 @@
-module github.com/MFarrelAkbar1/ForgeQ
+module github.com/MFarrelAkbar1/ForgeQ-Backend
 
 go 1.27.1
 

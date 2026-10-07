@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/job"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/worker"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/job"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/worker"
 )
 
 func TestDemoHandlers(t *testing.T) {

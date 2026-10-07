@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/handlers"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/handlers"
 )
 
 type enqueueResult struct {

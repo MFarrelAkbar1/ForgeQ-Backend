@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/store"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/store"
 )
 
 // ReaperStore is the persistence the reaper depends on; *store.Store implements it.

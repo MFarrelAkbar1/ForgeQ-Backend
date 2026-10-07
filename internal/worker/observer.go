@@ -3,7 +3,7 @@ package worker
 import (
 	"time"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/job"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/job"
 )
 
 // Outcome is how a claimed job left the worker.

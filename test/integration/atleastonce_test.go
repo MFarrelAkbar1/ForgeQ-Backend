@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/job"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/worker"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/job"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/worker"
 )
 
 // TestStalledWorkerCausesDuplicateExecution documents ForgeQ's delivery

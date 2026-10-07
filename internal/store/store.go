@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/job"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/job"
 )
 
 // NotifyChannel is the LISTEN/NOTIFY channel workers listen on for wake-ups

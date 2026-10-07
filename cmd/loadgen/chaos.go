@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/handlers"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/handlers"
 )
 
 // chaosMonkey disrupts one worker container at a time: either SIGKILL (a

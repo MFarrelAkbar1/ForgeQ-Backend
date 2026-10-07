@@ -11,14 +11,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/MFarrelAkbar1/ForgeQ/internal/backoff"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/config"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/handlers"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/logging"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/metrics"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/ops"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/store"
-	"github.com/MFarrelAkbar1/ForgeQ/internal/worker"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/backoff"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/config"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/handlers"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/logging"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/metrics"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/ops"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/store"
+	"github.com/MFarrelAkbar1/ForgeQ-Backend/internal/worker"
 )
 
 func main() {
