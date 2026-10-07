@@ -1,0 +1,65 @@
+{{define "title"}}Job #{{.Job.ID}} · ForgeQ{{end}}
+
+{{define "content"}}
+{{with .Job}}
+<p><a href="/ui/?status={{.Status}}">&larr; Back to {{.Status}} jobs</a></p>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Job #{{.ID}} {{template "status" .Status}}</h2>
+    {{if eq .Status "dead"}}
+    <div class="actions">
+      <button hx-post="/ui/jobs/{{.ID}}/retry?from=detail">Retry</button>
+      <button class="danger" hx-delete="/ui/jobs/{{.ID}}?from=detail"
+              hx-confirm="Delete job #{{.ID}} and its error history?">Delete</button>
+    </div>
+    {{end}}
+  </div>
+
+  <dl class="fields">
+    <dt>Queue</dt><dd>{{.Queue}}</dd>
+    <dt>Type</dt><dd><code>{{.Type}}</code></dd>
+    <dt>Priority</dt><dd>{{.Priority}}</dd>
+    <dt>Run</dt><dd>{{.Run}}{{if gt .Run 1}} <span class="muted">(retried manually {{sub .Run 1}}×)</span>{{end}}</dd>
+    <dt>Attempts</dt><dd>{{.Attempts}} of {{.MaxAttempts}}</dd>
+    <dt>Run at</dt><dd title="{{ts .RunAt}}">{{ts .RunAt}}</dd>
+    {{with .LockedBy}}<dt>Locked by</dt><dd><code>{{.}}</code></dd>{{end}}
+    {{with .LockedUntil}}<dt>Lease until</dt><dd>{{ts .}}</dd>{{end}}
+    {{with .IdempotencyKey}}<dt>Idempotency key</dt><dd><code>{{.}}</code></dd>{{end}}
+    <dt>Created</dt><dd>{{ts .CreatedAt}}</dd>
+    {{with .StartedAt}}<dt>Started</dt><dd>{{ts .}}</dd>{{end}}
+    {{with .FinishedAt}}<dt>Finished</dt><dd>{{ts .}}</dd>{{end}}
+    {{with .LastError}}<dt>Last error</dt><dd class="error-text">{{.}}</dd>{{end}}
+  </dl>
+</section>
+{{end}}
+
+<section class="card">
+  <h2>Payload</h2>
+  <pre class="code">{{.Payload}}</pre>
+</section>
+
+<section class="card">
+  <h2>Error history</h2>
+  {{if .Errors}}
+  <div class="scroll">
+  <table>
+    <thead><tr><th class="num">Run</th><th class="num">Attempt</th><th>When</th><th>Worker</th><th>Error</th></tr></thead>
+    <tbody>
+      {{range .Errors}}
+      <tr>
+        <td class="num">{{.Run}}</td>
+        <td class="num">{{.Attempt}}</td>
+        <td title="{{ts .OccurredAt}}">{{ago .OccurredAt}}</td>
+        <td><code>{{deref .WorkerID}}</code></td>
+        <td class="error-text">{{.Error}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{else}}
+  <p class="muted">No failed attempts.</p>
+  {{end}}
+</section>
+{{end}}

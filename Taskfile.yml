@@ -1,0 +1,105 @@
+version: "3"
+
+dotenv: [".env"]
+
+tasks:
+  default:
+    cmds: [task --list]
+    silent: true
+
+  build:
+    desc: Build all binaries into ./bin
+    cmds: [go build -o bin/ ./cmd/...]
+
+  fmt:
+    desc: Format Go code
+    cmds: [gofmt -w cmd internal migrations test]
+
+  vet:
+    desc: Run go vet (including integration-tagged files)
+    cmds:
+      - go vet ./...
+      - go vet -tags integration ./...
+
+  test:
+    desc: Run unit tests
+    cmds: [go test -count=1 ./...]
+
+  test:integration:
+    desc: Run integration tests against a throwaway Postgres container (needs Docker)
+    cmds: [go test -tags integration -count=1 -v ./test/integration/...]
+
+  test:race:
+    desc: Run unit and integration tests with the race detector (needs cgo/gcc)
+    cmds:
+      - go test -race -count=1 ./...
+      - go test -race -tags integration -count=1 ./test/integration/...
+
+  check:
+    desc: Build, vet and run all tests (run before every commit)
+    cmds:
+      - task: build
+      - task: vet
+      - task: test
+      - task: test:integration
+
+  up:
+    desc: Build and start the full stack (Postgres, migrate, api, 2 workers)
+    cmds: [docker compose up -d --build --wait]
+
+  up:monitoring:
+    desc: Same as up, plus Prometheus
+    cmds: [docker compose --profile monitoring up -d --build --wait]
+
+  down:
+    desc: Stop the stack, including optional profiles like monitoring (data volume is kept)
+    # "*" enables every profile, so services added under new profiles are stopped too.
+    cmds: ['docker compose --profile "*" down']
+
+  logs:
+    desc: Follow api and worker logs
+    cmds: [docker compose logs -f api worker]
+
+  loadgen:
+    desc: "Run the load generator against the running stack (flags after --, e.g. task loadgen -- -jobs 2000)"
+    cmds: ["go run ./cmd/loadgen {{.CLI_ARGS}}"]
+
+  bench:
+    desc: Benchmark several worker configurations (resizes the compose workers)
+    vars:
+      # loadgen runs inside the compose network so Docker Desktop's host port
+      # forwarding is not part of the measurement.
+      LOADGEN: docker compose run --rm --no-deps api loadgen -api http://api:8080 -markdown
+    cmds:
+      - WORKER_REPLICAS=1 WORKER_QUEUES=bench:10 docker compose up -d --wait worker
+      - '{{.LOADGEN}} -jobs 5000 -label "1 worker x 10"'
+      - WORKER_REPLICAS=2 WORKER_QUEUES=bench:10 docker compose up -d --wait worker
+      - '{{.LOADGEN}} -jobs 5000 -label "2 workers x 10"'
+      - WORKER_REPLICAS=2 WORKER_QUEUES=bench:50 docker compose up -d --wait worker
+      - '{{.LOADGEN}} -jobs 5000 -label "2 workers x 50"'
+      - WORKER_REPLICAS=4 WORKER_QUEUES=bench:50 docker compose up -d --wait worker
+      - '{{.LOADGEN}} -jobs 10000 -label "4 workers x 50"'
+      - docker compose up -d --wait worker
+
+  chaos:
+    desc: Kill/stop workers at random under load and verify no job is lost
+    cmds:
+      - WORKER_REPLICAS=3 WORKER_QUEUES=bench:10 LEASE_DURATION=5s HEARTBEAT_INTERVAL=1s REAPER_INTERVAL=2s docker compose up -d --wait worker
+      - go run ./cmd/loadgen -jobs 10000 -sleep 50ms -concurrency 20 -chaos -chaos-every 1500ms -label "chaos"
+      - docker compose up -d --wait worker
+
+  db:up:
+    desc: Start Postgres with docker compose
+    cmds: [docker compose up -d --wait postgres]
+
+  migrate:
+    desc: "Apply migrations (pass up/down/status after --, e.g. task migrate -- status)"
+    cmds: ["go run ./cmd/migrate {{.CLI_ARGS}}"]
+
+  run:api:
+    desc: Run the API server
+    cmds: [go run ./cmd/api]
+
+  run:worker:
+    desc: Run a worker
+    cmds: [go run ./cmd/worker]

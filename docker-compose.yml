@@ -1,0 +1,105 @@
+# Full local stack: Postgres, migrations, API + dashboard, two workers.
+#   docker compose up -d --build                       (or: task up)
+#   docker compose --profile monitoring up -d --build  (adds Prometheus)
+# Host ports come from .env: POSTGRES_PORT, API_PORT, PROMETHEUS_PORT.
+
+x-app: &app
+  build: .
+  image: forgeq:local
+  restart: unless-stopped
+
+x-app-env: &app-env
+  DATABASE_URL: postgres://forgeq:forgeq@postgres:5432/forgeq?sslmode=disable
+  # Connection budget: api pool + replicas x (pool + 1 LISTEN connection) must
+  # stay under Postgres max_connections (100).
+  DB_MAX_CONNS: ${DB_MAX_CONNS:-10}
+  LOG_FORMAT: json
+  LOG_LEVEL: info
+  API_KEY: ${API_KEY:-}
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: forgeq
+      POSTGRES_PASSWORD: forgeq
+      POSTGRES_DB: forgeq
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forgeq -d forgeq"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  migrate:
+    <<: *app
+    command: ["migrate", "up"]
+    restart: "no"
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    command: ["api"]
+    environment:
+      <<: *app-env
+      HTTP_ADDR: ":8080"
+      # The api serves many short concurrent requests: give it a larger pool.
+      DB_MAX_CONNS: ${API_DB_MAX_CONNS:-25}
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    <<: *app
+    command: ["worker"]
+    environment:
+      <<: *app-env
+      OPS_ADDR: ":9090"
+      # Overridable from the shell or .env, e.g. for benchmarks and chaos runs.
+      WORKER_QUEUES: ${WORKER_QUEUES:-default:10,emails:5,reports:2,bench:10}
+      LEASE_DURATION: ${LEASE_DURATION:-30s}
+      HEARTBEAT_INTERVAL: ${HEARTBEAT_INTERVAL:-10s}
+      REAPER_INTERVAL: ${REAPER_INTERVAL:-15s}
+      POLL_INTERVAL: ${POLL_INTERVAL:-1s}
+      SHUTDOWN_TIMEOUT: 25s
+      DEMO_FAIL_RATE: "0.2"
+    deploy:
+      replicas: ${WORKER_REPLICAS:-2}
+    # Must exceed SHUTDOWN_TIMEOUT plus the 5s release grace, or Docker sends
+    # SIGKILL before interrupted jobs are released (default is only 10s).
+    stop_grace_period: 35s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:v3.7.0
+    profiles: ["monitoring"]
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "${PROMETHEUS_PORT:-9091}:9090"
+    depends_on:
+      - api
+      - worker
+
+volumes:
+  pgdata:

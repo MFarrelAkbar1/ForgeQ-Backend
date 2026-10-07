@@ -1,0 +1,32 @@
+{{define "content"}}
+{{template "stats" .Stats}}
+
+<section class="card">
+  <div class="card-head">
+    <h2>Jobs</h2>
+    <nav class="tabs" aria-label="Filter by status">
+      {{range .Statuses}}
+      <a href="/ui/?status={{.}}{{if $.Queue}}&amp;queue={{$.Queue}}{{end}}"
+         {{if eq . $.Status}}class="active" aria-current="page"{{end}}>{{.}}</a>
+      {{end}}
+    </nav>
+  </div>
+  {{if .Queue}}
+  <p class="muted">Queue <code>{{.Queue}}</code> · <a href="/ui/?status={{.Status}}">show all queues</a></p>
+  {{end}}
+  <div class="scroll">
+  <table class="jobs">
+    <thead>
+      <tr>
+        <th>Job</th><th>Queue</th><th>Type</th><th>Status</th>
+        <th class="num">Attempts</th><th>Last error</th><th>Updated</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{template "rows" .Rows}}
+      {{if not .Rows.Jobs}}<tr><td colspan="8" class="muted empty">No {{.Status}} jobs.</td></tr>{{end}}
+    </tbody>
+  </table>
+  </div>
+</section>
+{{end}}

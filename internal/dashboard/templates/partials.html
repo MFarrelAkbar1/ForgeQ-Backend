@@ -1,0 +1,64 @@
+{{/* Fragments rendered on their own for htmx requests. */}}
+
+{{define "status"}}<span class="pill pill-{{.}}">{{.}}</span>{{end}}
+
+{{define "stats"}}
+<section id="stats" class="card" hx-get="/ui/partials/stats" hx-trigger="every 3s" hx-swap="outerHTML">
+  <h2>Queues</h2>
+  {{if .Queues}}
+  <div class="scroll">
+  <table class="stats">
+    <thead>
+      <tr><th>Queue</th>{{range .Statuses}}<th class="num">{{.}}</th>{{end}}</tr>
+    </thead>
+    <tbody>
+      {{range $q := .Queues}}
+      <tr>
+        <th scope="row">{{$q.Queue}}</th>
+        {{range $s := $.Statuses}}
+        {{$n := index $q.Counts $s}}
+        <td class="num{{if and (eq $s "dead") (gt $n 0)}} alert{{end}}">
+          <a href="/ui/?queue={{$q.Queue}}&amp;status={{$s}}">{{$n}}</a>
+        </td>
+        {{end}}
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{else}}
+  <p class="muted">No jobs yet. Enqueue one with <code>POST /api/v1/jobs</code>.</p>
+  {{end}}
+</section>
+{{end}}
+
+{{define "row"}}
+<tr id="job-{{.ID}}">
+  <td><a href="/ui/jobs/{{.ID}}">#{{.ID}}</a></td>
+  <td>{{.Queue}}</td>
+  <td><code>{{.Type}}</code></td>
+  <td>{{template "status" .Status}}</td>
+  <td class="num" title="run {{.Run}}, attempt {{.Attempts}} of {{.MaxAttempts}}">{{if gt .Run 1}}r{{.Run}} · {{end}}{{.Attempts}}/{{.MaxAttempts}}</td>
+  <td class="error-cell" title="{{deref .LastError}}">{{short (deref .LastError) 90}}</td>
+  <td class="muted" title="{{ts .UpdatedAt}}">{{ago .UpdatedAt}}</td>
+  <td class="actions">
+    {{if eq .Status "dead"}}
+    <button hx-post="/ui/jobs/{{.ID}}/retry" hx-target="closest tr" hx-swap="outerHTML">Retry</button>
+    <button class="danger" hx-delete="/ui/jobs/{{.ID}}" hx-target="closest tr" hx-swap="outerHTML"
+            hx-confirm="Delete job #{{.ID}} and its error history?">Delete</button>
+    {{end}}
+  </td>
+</tr>
+{{end}}
+
+{{define "rows"}}
+{{range .Jobs}}{{template "row" .}}{{end}}
+{{if .NextCursor}}
+<tr class="load-more">
+  <td colspan="8">
+    <button hx-get="/ui/partials/jobs?status={{.Status}}&amp;queue={{.Queue}}&amp;cursor={{.NextCursor}}"
+            hx-target="closest tr" hx-swap="outerHTML">Load more</button>
+  </td>
+</tr>
+{{end}}
+{{end}}

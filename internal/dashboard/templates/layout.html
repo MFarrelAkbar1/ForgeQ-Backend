@@ -1,0 +1,21 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{block "title" .}}ForgeQ{{end}}</title>
+  <link rel="stylesheet" href="/ui/static/app.css">
+  <script src="/ui/static/htmx.min.js" defer></script>
+  <script src="/ui/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/ui/">ForgeQ</a>
+    <span class="muted">job queue dashboard</span>
+  </header>
+  <div id="flash" class="flash" role="alert" hidden></div>
+  <main>
+    {{template "content" .}}
+  </main>
+</body>
+</html>{{end}}

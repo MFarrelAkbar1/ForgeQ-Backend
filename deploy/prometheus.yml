@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: forgeq-api
+    static_configs:
+      - targets: ["api:8080"]
+
+  # Workers are scaled with `deploy.replicas`; Docker's DNS returns one A
+  # record per replica, so every worker is scraped individually.
+  - job_name: forgeq-worker
+    dns_sd_configs:
+      - names: ["worker"]
+        type: A
+        port: 9090
