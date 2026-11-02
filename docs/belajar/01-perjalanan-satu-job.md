@@ -33,7 +33,7 @@ sequenceDiagram
         J->>P: Heartbeat (perpanjang locked_until)
     end
     J->>J: handler send_email
-    J->>P: Complete WHERE locked_by = saya
+    J->>P: Complete WHERE lease = milik saya
 ```
 
 ### Langkah 1: klien mengirim request
@@ -201,10 +201,10 @@ outcome = w.finish(j, err, took, log)
 ```sql
 UPDATE jobs SET status = 'succeeded', locked_by = NULL, locked_until = NULL,
                finished_at = now(), updated_at = now()
-WHERE id = $1 AND status = 'running' AND locked_by = $2
+WHERE id = $1 AND status = 'running' AND locked_by = $2 AND run = $3 AND attempts = $4
 ```
 
-Klausa `AND locked_by = $2` adalah **fencing**: hanya pemilik lease yang boleh menyelesaikan job ini.
+Klausa `WHERE` ini (konstanta `fenced`) adalah **fencing**: hanya claim yang masih berlaku yang boleh menyelesaikan job ini. `$1`–`$4` berasal dari `store.LeaseOf(j, w.cfg.ID)`, yaitu job id, worker id, run, dan attempts hasil claim ([03](03-lease-heartbeat-fencing.md)).
 
 ### Langkah 15: bersih-bersih
 
@@ -249,7 +249,7 @@ stateDiagram-v2
 ```go
 retryAt := time.Now().Add(w.cfg.RetryDelay(j.Attempts))
 status, err := w.store.Fail(ctx, store.Failure{
-    JobID: j.ID, WorkerID: w.cfg.ID,
+    Lease:     store.LeaseOf(j, w.cfg.ID),
     Error:     truncate(jobErr.Error(), maxErrorLength), // dipotong di batas rune UTF-8
     RetryAt:   retryAt,
     Permanent: IsPermanent(jobErr),
@@ -262,15 +262,15 @@ status, err := w.store.Fail(ctx, store.Failure{
 
 ```sql
 UPDATE jobs
-SET status      = CASE WHEN $4 OR attempts >= max_attempts THEN 'dead' ELSE 'retrying' END,
-    run_at      = CASE WHEN $4 OR attempts >= max_attempts THEN run_at ELSE $5 END,
-    finished_at = CASE WHEN $4 OR attempts >= max_attempts THEN now() END,
-    last_error = $3, locked_by = NULL, locked_until = NULL, updated_at = now()
-WHERE id = $1 AND status = 'running' AND locked_by = $2   -- fencing
-RETURNING status, run, attempts
+SET status      = CASE WHEN $6 OR attempts >= max_attempts THEN 'dead' ELSE 'retrying' END,
+    run_at      = CASE WHEN $6 OR attempts >= max_attempts THEN run_at ELSE $7 END,
+    finished_at = CASE WHEN $6 OR attempts >= max_attempts THEN now() END,
+    last_error = $5, locked_by = NULL, locked_until = NULL, updated_at = now()
+WHERE id = $1 AND status = 'running' AND locked_by = $2 AND run = $3 AND attempts = $4   -- fencing
+RETURNING status
 ```
 
-lalu `INSERT INTO job_errors (job_id, run, attempt, error, worker_id)`. Keduanya ada di dalam `pgx.BeginFunc`, sehingga **status dan riwayat selalu konsisten**. `$4` adalah `Permanent`: error yang dibungkus `worker.Permanent(...)` langsung menjadi `dead` tanpa retry.
+lalu `INSERT INTO job_errors (job_id, run, attempt, error, worker_id)`. Keduanya ada di dalam `pgx.BeginFunc`, sehingga **status dan riwayat selalu konsisten**. `$6` adalah `Permanent`: error yang dibungkus `worker.Permanent(...)` langsung menjadi `dead` tanpa retry.
 
 Keputusan "retry atau dead" diambil **di database** (`attempts >= max_attempts`), bukan di Go. Dengan begitu tidak ada celah antara membaca dan menulis.
 

@@ -70,11 +70,11 @@ sequenceDiagram
     P-->>W: notification (workers also poll)
     W->>P: claim batch with SKIP LOCKED: running, attempts+1, lease
     loop every HEARTBEAT_INTERVAL
-        W->>P: extend lease WHERE locked_by = me
+        W->>P: extend lease WHERE lease = mine (worker, run, attempt)
     end
     W->>W: run handler (per-job timeout)
     alt success
-        W->>P: succeeded WHERE locked_by = me
+        W->>P: succeeded WHERE lease = mine
     else failure
         W->>P: retrying at now+backoff, or dead (+ job_errors row)
     end
@@ -129,7 +129,7 @@ Each decision lists the problem it solves and what it costs.
 
 ### Lease, heartbeat and fencing
 - **Problem:** a fixed lease forces a bad choice. A short lease makes long jobs look dead; a long lease means crashes are noticed late.
-- **Decision:** the lease is short (`LEASE_DURATION`, 30 s) and a heartbeat extends it every `HEARTBEAT_INTERVAL` (10 s) while the job runs. Every write a worker makes (heartbeat, complete, fail, release) includes `WHERE status='running' AND locked_by=$me`. If that matches 0 rows, the worker has lost the job. The handler's context is then cancelled with cause `ErrLeaseLost`, and nothing more is written.
+- **Decision:** the lease is short (`LEASE_DURATION`, 30 s) and a heartbeat extends it every `HEARTBEAT_INTERVAL` (10 s) while the job runs. Every write a worker makes (heartbeat, complete, fail, release) is fenced on the lease it got from the claim: `WHERE status='running' AND locked_by=$me AND run=$run AND attempts=$attempt`. If that matches 0 rows, the worker has lost the job. The worker ID alone is not a sufficient fencing token: a worker that stalls can claim the same job again on a free slot, and both executions would then have `locked_by = me`. Because `attempts` goes up on every claim (and `run` on every manual retry), the pair identifies one claim, like a fencing token, without an extra column. The handler's context is then cancelled with cause `ErrLeaseLost`, and nothing more is written.
 - **Trade-off:**
   - Fencing protects the database state, not the outside world. A side effect that already happened stays done, which is why delivery is at-least-once.
   - Heartbeats cost one query per running job per interval. Batching them per worker is a possible optimization.
@@ -383,7 +383,7 @@ task check              # build + vet + unit + integration
 **Integration tests** run against real PostgreSQL. Among other things they prove:
 - **No double claims:** 32 claimers race for 5,000 jobs across two queues and none is handed out twice or lost. Four full worker instances process 3,000 jobs and each handler runs exactly once.
 - **Idempotency:** 20 parallel enqueues with the same key create exactly one row.
-- **Fencing:** a stale worker's heartbeat, complete and fail are all rejected. After a reaper takeover the stale handler is cancelled, and only the new owner's result is kept.
+- **Fencing:** a stale worker's heartbeat, complete, fail and release are all rejected, also when the stale and the new claim belong to the same worker. After a reaper takeover the stale handler is cancelled, and only the new owner's result is kept.
 - **Shutdown:** an interrupted job is released without using up an attempt. Running jobs finish, and nothing new is claimed.
 - **Retention:** only old succeeded jobs are deleted.
 - **Wake-ups:** notifications are coalesced, and a plain insert does not notify (a guard against reintroducing the trigger).

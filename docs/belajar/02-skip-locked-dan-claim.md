@@ -195,7 +195,7 @@ go test -tags integration -count=1 -v -run '^(TestClaimOrderAndSchedule|TestFail
 ```
 store_test.go:39: claimed job 2 in unexpected state: &{... Attempts:0 ...}
 --- FAIL: TestClaimOrderAndSchedule
-store_test.go:217: after attempt 2: status = retrying, want dead
+store_test.go:270: after attempt 2: status = retrying, want dead
 --- FAIL: TestFailRetriesThenDies
 ```
 
