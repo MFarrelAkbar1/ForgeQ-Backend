@@ -19,10 +19,10 @@ import (
 // Store is the persistence the worker depends on; *store.Store implements it.
 type Store interface {
 	Claim(ctx context.Context, queue, workerID string, limit int, lease time.Duration) ([]*job.Job, error)
-	Heartbeat(ctx context.Context, id int64, workerID string, lease time.Duration) error
-	Complete(ctx context.Context, id int64, workerID string) error
+	Heartbeat(ctx context.Context, l store.Lease, d time.Duration) error
+	Complete(ctx context.Context, l store.Lease) error
 	Fail(ctx context.Context, f store.Failure) (job.Status, error)
-	Release(ctx context.Context, id int64, workerID string) error
+	Release(ctx context.Context, l store.Lease) error
 }
 
 // ErrShutdown is the cancellation cause seen by handlers that are still
@@ -270,7 +270,7 @@ func (w *Worker) typeLabel(jobType string) string {
 func (w *Worker) release(j *job.Job, log *slog.Logger) Outcome {
 	ctx, cancel := context.WithTimeout(context.Background(), finishTimeout)
 	defer cancel()
-	err := w.store.Release(ctx, j.ID, w.cfg.ID)
+	err := w.store.Release(ctx, store.LeaseOf(j, w.cfg.ID))
 	switch {
 	case errors.Is(err, store.ErrLeaseLost):
 		log.Warn("could not release job: lease already lost")
@@ -285,9 +285,9 @@ func (w *Worker) release(j *job.Job, log *slog.Logger) Outcome {
 }
 
 // heartbeat extends the job's lease every HeartbeatInterval until ctx is done.
-// The update is fenced on (status='running', locked_by=this worker): if it
-// matches no row, the reaper has requeued the job (and maybe another worker
-// claimed it), so the job is cancelled via lose.
+// The update is fenced on this claim's lease (store.Lease): if it matches no
+// row, the reaper has requeued the job (and maybe another worker, or this one,
+// claimed it again), so the job is cancelled via lose.
 func (w *Worker) heartbeat(ctx context.Context, j *job.Job, lose context.CancelCauseFunc, log *slog.Logger) {
 	t := time.NewTicker(w.cfg.HeartbeatInterval)
 	defer t.Stop()
@@ -299,7 +299,7 @@ func (w *Worker) heartbeat(ctx context.Context, j *job.Job, lose context.CancelC
 		}
 
 		hbCtx, cancel := context.WithTimeout(ctx, w.cfg.HeartbeatInterval)
-		err := w.store.Heartbeat(hbCtx, j.ID, w.cfg.ID, w.cfg.LeaseDuration)
+		err := w.store.Heartbeat(hbCtx, store.LeaseOf(j, w.cfg.ID), w.cfg.LeaseDuration)
 		cancel()
 		switch {
 		case errors.Is(err, store.ErrLeaseLost):
@@ -345,7 +345,7 @@ func (w *Worker) finish(j *job.Job, jobErr error, took time.Duration, log *slog.
 	defer cancel()
 
 	if jobErr == nil {
-		err := w.store.Complete(ctx, j.ID, w.cfg.ID)
+		err := w.store.Complete(ctx, store.LeaseOf(j, w.cfg.ID))
 		switch {
 		case errors.Is(err, store.ErrLeaseLost):
 			log.Warn("job finished but lease was lost; result discarded", "took", took)
@@ -361,8 +361,7 @@ func (w *Worker) finish(j *job.Job, jobErr error, took time.Duration, log *slog.
 
 	retryAt := time.Now().Add(w.cfg.RetryDelay(j.Attempts))
 	status, err := w.store.Fail(ctx, store.Failure{
-		JobID:     j.ID,
-		WorkerID:  w.cfg.ID,
+		Lease:     store.LeaseOf(j, w.cfg.ID),
 		Error:     truncate(jobErr.Error(), maxErrorLength),
 		RetryAt:   retryAt,
 		Permanent: IsPermanent(jobErr),

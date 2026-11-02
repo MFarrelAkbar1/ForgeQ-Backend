@@ -307,16 +307,47 @@ func (s *Store) Claim(ctx context.Context, queue, workerID string, limit int, le
 	return jobs, nil
 }
 
-// Complete marks a running job owned by workerID as succeeded.
-// It returns ErrLeaseLost if the worker no longer owns the job.
-func (s *Store) Complete(ctx context.Context, id int64, workerID string) error {
+// Lease identifies one claim of a job. It is the fencing token: every write a
+// worker makes about a job it claimed (Heartbeat, Complete, Fail, Release)
+// matches only while the job is still running under this exact claim.
+//
+// WorkerID alone is not enough, because a worker can claim the same job again
+// after losing its lease (the reaper requeued it while the worker was stalled),
+// and the stale and the new execution would then share one locked_by. Run and
+// Attempt tell them apart: Claim increments attempts, and RetryDead increments
+// run (and resets attempts). Release decrements attempts, but only the current
+// claim can release, so attempts never drops back to the value of a claim the
+// reaper took away: a stale claim's token never matches again.
+type Lease struct {
+	JobID    int64
+	WorkerID string
+	Run      int
+	Attempt  int
+}
+
+// LeaseOf returns the lease that Claim gave workerID for j.
+func LeaseOf(j *job.Job, workerID string) Lease {
+	return Lease{JobID: j.ID, WorkerID: workerID, Run: j.Run, Attempt: j.Attempts}
+}
+
+// fenced is the WHERE clause of every write under a lease, with the lease in
+// $1..$4 (see Lease.args).
+const fenced = `id = $1 AND status = 'running' AND locked_by = $2 AND run = $3 AND attempts = $4`
+
+func (l Lease) args(more ...any) []any {
+	return append([]any{l.JobID, l.WorkerID, l.Run, l.Attempt}, more...)
+}
+
+// Complete marks a running job as succeeded.
+// It returns ErrLeaseLost if the lease is no longer the job's current claim.
+func (s *Store) Complete(ctx context.Context, l Lease) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE jobs
 		SET status = 'succeeded', locked_by = NULL, locked_until = NULL,
 		    finished_at = now(), updated_at = now()
-		WHERE id = $1 AND status = 'running' AND locked_by = $2`, id, workerID)
+		WHERE `+fenced, l.args()...)
 	if err != nil {
-		return fmt.Errorf("complete job %d: %w", id, err)
+		return fmt.Errorf("complete job %d: %w", l.JobID, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrLeaseLost
@@ -324,16 +355,15 @@ func (s *Store) Complete(ctx context.Context, id int64, workerID string) error {
 	return nil
 }
 
-// Heartbeat extends the lease of a running job owned by workerID to now+lease.
-// It returns ErrLeaseLost if the worker no longer owns the job, which tells the
-// worker to stop processing it.
-func (s *Store) Heartbeat(ctx context.Context, id int64, workerID string, lease time.Duration) error {
+// Heartbeat extends the lease of a running job to now+d.
+// It returns ErrLeaseLost if the lease is no longer the job's current claim,
+// which tells the worker to stop processing it.
+func (s *Store) Heartbeat(ctx context.Context, l Lease, d time.Duration) error {
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE jobs SET locked_until = now() + $3 * interval '1 millisecond'
-		WHERE id = $1 AND status = 'running' AND locked_by = $2`,
-		id, workerID, lease.Milliseconds())
+		UPDATE jobs SET locked_until = now() + $5 * interval '1 millisecond'
+		WHERE `+fenced, l.args(d.Milliseconds())...)
 	if err != nil {
-		return fmt.Errorf("heartbeat job %d: %w", id, err)
+		return fmt.Errorf("heartbeat job %d: %w", l.JobID, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrLeaseLost
@@ -343,21 +373,21 @@ func (s *Store) Heartbeat(ctx context.Context, id int64, workerID string, lease 
 
 // Release hands a running job back to the queue during graceful shutdown. The
 // attempt is not counted (attempts is decremented) because the job did not
-// fail; the worker just stopped. It returns ErrLeaseLost if the worker no
-// longer owns the job.
-func (s *Store) Release(ctx context.Context, id int64, workerID string) error {
+// fail; the worker just stopped. It returns ErrLeaseLost if the lease is no
+// longer the job's current claim.
+func (s *Store) Release(ctx context.Context, l Lease) error {
 	var queue string
 	err := s.pool.QueryRow(ctx, `
 		UPDATE jobs
 		SET status = 'pending', attempts = attempts - 1, run_at = now(),
 		    locked_by = NULL, locked_until = NULL, started_at = NULL, updated_at = now()
-		WHERE id = $1 AND status = 'running' AND locked_by = $2
-		RETURNING queue`, id, workerID).Scan(&queue)
+		WHERE `+fenced+`
+		RETURNING queue`, l.args()...).Scan(&queue)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrLeaseLost
 	}
 	if err != nil {
-		return fmt.Errorf("release job %d: %w", id, err)
+		return fmt.Errorf("release job %d: %w", l.JobID, err)
 	}
 	s.notify(queue)
 	return nil
@@ -365,8 +395,7 @@ func (s *Store) Release(ctx context.Context, id int64, workerID string) error {
 
 // Failure describes a failed attempt reported by a worker.
 type Failure struct {
-	JobID     int64
-	WorkerID  string
+	Lease
 	Error     string
 	RetryAt   time.Time // when to run again if attempts remain
 	Permanent bool      // skip remaining attempts and go straight to dead
@@ -375,29 +404,29 @@ type Failure struct {
 // Fail records a failed attempt. The job moves to retrying (run again at
 // f.RetryAt) or to dead when it is out of attempts or the failure is
 // permanent. The new status is returned. It returns ErrLeaseLost if the
-// worker no longer owns the job.
+// lease is no longer the job's current claim.
 func (s *Store) Fail(ctx context.Context, f Failure) (job.Status, error) {
 	var status job.Status
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		var run, attempt int
 		err := tx.QueryRow(ctx, `
 			UPDATE jobs
-			SET status = CASE WHEN $4 OR attempts >= max_attempts THEN 'dead' ELSE 'retrying' END,
-			    run_at = CASE WHEN $4 OR attempts >= max_attempts THEN run_at ELSE $5 END,
-			    finished_at = CASE WHEN $4 OR attempts >= max_attempts THEN now() END,
-			    last_error = $3, locked_by = NULL, locked_until = NULL, updated_at = now()
-			WHERE id = $1 AND status = 'running' AND locked_by = $2
-			RETURNING status, run, attempts`,
-			f.JobID, f.WorkerID, f.Error, f.Permanent, f.RetryAt).Scan(&status, &run, &attempt)
+			SET status = CASE WHEN $6 OR attempts >= max_attempts THEN 'dead' ELSE 'retrying' END,
+			    run_at = CASE WHEN $6 OR attempts >= max_attempts THEN run_at ELSE $7 END,
+			    finished_at = CASE WHEN $6 OR attempts >= max_attempts THEN now() END,
+			    last_error = $5, locked_by = NULL, locked_until = NULL, updated_at = now()
+			WHERE `+fenced+`
+			RETURNING status`,
+			f.args(f.Error, f.Permanent, f.RetryAt)...).Scan(&status)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrLeaseLost
 		}
 		if err != nil {
 			return err
 		}
+		// The fence matched, so the row's run and attempts are the lease's.
 		_, err = tx.Exec(ctx, `
 			INSERT INTO job_errors (job_id, run, attempt, error, worker_id) VALUES ($1, $2, $3, $4, $5)`,
-			f.JobID, run, attempt, f.Error, f.WorkerID)
+			f.JobID, f.Run, f.Attempt, f.Error, f.WorkerID)
 		return err
 	})
 	if errors.Is(err, ErrLeaseLost) {
