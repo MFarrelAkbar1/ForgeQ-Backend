@@ -23,7 +23,7 @@ Istilah diurutkan secara alfabetis. Kolom "Di ForgeQ" menunjuk ke tempat istilah
 | **Delayed job** | Job dengan `run_at` di masa depan (`scheduled_at` di API). | Ditemukan lewat polling, tanpa NOTIFY. |
 | **Durable** | Tersimpan permanen, tetap ada meski proses mati. Di PostgreSQL berarti transaksi sudah commit dan WAL sudah di-flush. | Arti `201 Created` dari API. |
 | **Exactly-once** | Jaminan tepat sekali. Untuk efek samping ke sistem luar, praktis mustahil tanpa kerja sama sistem tersebut. | **Tidak** diklaim ForgeQ. |
-| **Fencing** | Setiap tulisan worker menyertakan bukti kepemilikan (`locked_by = $worker`), sehingga pemilik lama yang sudah kehilangan hak ditolak. | `Heartbeat`, `Complete`, `Fail`, `Release` ([03](03-lease-heartbeat-fencing.md)). |
+| **Fencing** | Setiap tulisan worker menyertakan bukti kepemilikan berupa *fencing token* (`store.Lease`: `locked_by`, `run`, `attempts` dari hasil claim), sehingga claim lama yang sudah kehilangan hak ditolak, termasuk kalau claim lama dan baru berasal dari worker yang sama. | `Heartbeat`, `Complete`, `Fail`, `Release` ([03](03-lease-heartbeat-fencing.md)). |
 | **Fetch loop** | Loop yang mengambil job untuk satu queue. | `(*Worker).runQueue`. |
 | **Graceful shutdown** | Berhenti dengan rapi: menyelesaikan atau mengembalikan pekerjaan yang sedang berjalan. | `(*Worker).Run` ([08](08-graceful-shutdown.md)). |
 | **Handler** | Fungsi yang mengerjakan satu tipe job. | `worker.HandlerFunc`, didaftarkan lewat `Registry.RegisterHandler`. |
