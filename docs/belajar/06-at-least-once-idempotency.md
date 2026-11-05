@@ -172,7 +172,7 @@ Di `test/integration/atleastonce_test.go`, simulasikan sistem hilir yang menging
  ...
 -	sideEffects.Add(1)
 +	charge(j.ID)
- 	if err := s.Complete(ctx, j.ID, "w2"); err != nil {
+ 	if err := s.Complete(ctx, store.LeaseOf(claimed[0], "w2")); err != nil {
  ...
  	close(w1Resume)
 -	waitFor(t, 5*time.Second, "w1 to finish its stale run", func() bool { return sideEffects.Load() == 2 })
@@ -186,7 +186,7 @@ go test -tags integration -count=1 -v -run '^TestStalledWorkerCausesDuplicateExe
 **Hasil yang diharapkan:**
 
 ```
-atleastonce_test.go:95: side effects = 1, want 2 (the duplicate this test documents)
+atleastonce_test.go:96: side effects = 1, want 2 (the duplicate this test documents)
 --- FAIL: TestStalledWorkerCausesDuplicateExecution
 ```
 
