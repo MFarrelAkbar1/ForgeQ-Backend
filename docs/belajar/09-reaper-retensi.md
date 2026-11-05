@@ -129,7 +129,7 @@ go test -tags integration -count=1 -v -run '^TestRetentionDeletesOnlyOldSucceede
 **Hasil yang diharapkan:**
 
 ```
-reaper_test.go:206: old dead: kept = false, want true
+reaper_test.go:290: old dead: kept = false, want true
 --- FAIL: TestRetentionDeletesOnlyOldSucceeded
 ```
 
