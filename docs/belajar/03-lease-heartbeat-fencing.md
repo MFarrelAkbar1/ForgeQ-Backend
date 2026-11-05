@@ -14,7 +14,7 @@ Kebutuhan: (1) mendeteksi worker mati dalam waktu wajar, (2) tidak salah menuduh
 
 - **Lease (sewa)**: claim tidak berlaku selamanya, hanya "milik worker X **sampai jam T**". Kalau T lewat tanpa diperpanjang, job dianggap yatim.
 - **Heartbeat**: selama job berjalan, worker memperpanjang T secara berkala ("saya masih hidup"). Lease bisa pendek (deteksi crash cepat), dan job lama tetap aman selama heartbeat berjalan.
-- **Fencing**: setiap tulisan menyertakan identitas pemilik lease, dan database menolaknya kalau pemiliknya sudah berganti. Istilah ini dipopulerkan Martin Kleppmann (*fencing token*). ForgeQ memakai `locked_by` (ID worker) sebagai token, dan pengecekannya terjadi **di database, di dalam statement yang sama**.
+- **Fencing**: setiap tulisan menyertakan identitas pemilik lease, dan database menolaknya kalau pemiliknya sudah berganti. Istilah ini dipopulerkan Martin Kleppmann (*fencing token*): token yang **berubah di setiap claim**. Token ForgeQ adalah `store.Lease` = `(job id, locked_by, run, attempts)` dari hasil claim, dan pengecekannya terjadi **di database, di dalam statement yang sama**.
 
 Lease menjawab masalah 1 dan 2. Fencing menjawab masalah 3. Tanpa fencing, lease justru **berbahaya**: lease memungkinkan dua pemilik (A yang lama dan B yang baru), dan hanya fencing yang memastikan hanya satu yang boleh menulis.
 
@@ -35,7 +35,7 @@ for {
     case <-t.C:
     }
     hbCtx, cancel := context.WithTimeout(ctx, w.cfg.HeartbeatInterval)
-    err := w.store.Heartbeat(hbCtx, j.ID, w.cfg.ID, w.cfg.LeaseDuration)
+    err := w.store.Heartbeat(hbCtx, store.LeaseOf(j, w.cfg.ID), w.cfg.LeaseDuration)
     cancel()
     switch {
     case errors.Is(err, store.ErrLeaseLost):
@@ -52,10 +52,25 @@ for {
 
 ### Store: `(*Store).Heartbeat` di [`internal/store/store.go`](../../internal/store/store.go)
 
-```sql
-UPDATE jobs SET locked_until = now() + $3 * interval '1 millisecond'
-WHERE id = $1 AND status = 'running' AND locked_by = $2
+```go
+type Lease struct {
+    JobID    int64
+    WorkerID string
+    Run      int
+    Attempt  int
+}
+
+func LeaseOf(j *job.Job, workerID string) Lease { ... } // diambil dari hasil Claim
+
+const fenced = `id = $1 AND status = 'running' AND locked_by = $2 AND run = $3 AND attempts = $4`
 ```
+
+```sql
+UPDATE jobs SET locked_until = now() + $5 * interval '1 millisecond'
+WHERE id = $1 AND status = 'running' AND locked_by = $2 AND run = $3 AND attempts = $4
+```
+
+Klausa `fenced` ditulis sekali dan dipakai oleh keempat tulisan worker, jadi tidak mungkin salah satunya lupa memeriksa sebagian token.
 
 ```go
 if tag.RowsAffected() == 0 {
@@ -63,16 +78,34 @@ if tag.RowsAffected() == 0 {
 }
 ```
 
-`0 rows affected` berarti salah satu dari: job sudah bukan `running` (reaper memindahkannya ke `retrying`), atau `locked_by` sudah orang lain (worker lain meng-claim ulang). Keduanya artinya sama: **kamu bukan pemilik lagi**.
+`0 rows affected` berarti salah satu dari: job sudah bukan `running` (reaper memindahkannya ke `retrying`), `locked_by` sudah orang lain (worker lain meng-claim ulang), atau `attempts`/`run` sudah naik (job di-claim ulang, **bisa jadi oleh worker yang sama**). Semuanya artinya sama: **claim kamu sudah bukan claim yang berlaku**.
 
 ### Fencing di semua tulisan worker
 
 | Fungsi | Klausa fence | Kalau 0 baris |
 |---|---|---|
-| `Heartbeat` | `WHERE id=$1 AND status='running' AND locked_by=$2` | `ErrLeaseLost` |
+| `Heartbeat` | `fenced` (`id`, `status='running'`, `locked_by`, `run`, `attempts`) | `ErrLeaseLost` |
 | `Complete` | sama | `ErrLeaseLost` |
 | `Fail` | sama (di dalam transaksi) | `ErrLeaseLost`, dan `job_errors` tidak ditulis |
 | `Release` | sama | `ErrLeaseLost` |
+
+### Kenapa `locked_by` saja tidak cukup?
+
+Versi awal ForgeQ hanya memakai `locked_by` sebagai token. Itu cukup untuk membedakan worker yang **berbeda**, tetapi tidak untuk membedakan dua eksekusi di worker yang **sama**:
+
+1. W1 (concurrency 10) claim job #7: eksekusi A, `attempts=1`.
+2. W1 macet lebih dari 30 s. Reaper memindahkan #7 ke `retrying`.
+3. W1 pulih. Fetch loop-nya masih punya slot kosong, jadi W1 claim #7 lagi: eksekusi B, `attempts=2`, `locked_by` **tetap W1**.
+4. Heartbeat A berjalan dengan `WHERE locked_by='W1'`: cocok, sehingga A **tidak dibatalkan**. Kalau A lalu gagal, `Fail`-nya juga lolos: job kembali ke `retrying` padahal B masih berjalan, dan `job_errors` mencatat error A sebagai attempt 2.
+
+Dengan `run` dan `attempts` di dalam fence, tulisan A memakai `attempts=1` sementara baris job sudah `attempts=2`, jadi cocok 0 baris dan menghasilkan `ErrLeaseLost`. Skenario ini diuji oleh `TestSameWorkerReclaimCancelsStaleRun`. Setiap bagian token diuji terpisah oleh `TestWritesNeedTheWholeLease`.
+
+**Apakah `Release` (`attempts - 1`) bisa membuat token lama berlaku lagi?** Tidak. Misalkan eksekusi zombie Z memegang `attempts = z`, lalu reaper mengambil job-nya (attempts tetap `z`, status `retrying`). Sejak saat itu:
+- `Claim` menaikkan attempts menjadi `z+1` atau lebih.
+- `Release` hanya bisa dilakukan oleh claim yang **sedang berlaku** (karena di-fence juga), dan ia hanya membatalkan `+1` miliknya sendiri. Nilainya kembali ke angka sebelum claim itu (`≥ z`), dan statusnya `pending`, bukan `running`.
+- `RetryDead` me-reset attempts ke 0, tetapi menaikkan `run`, jadi pasangan `(run, attempts)` tetap berbeda.
+
+Jadi setiap kali job berstatus `running`, attempts-nya selalu `> z`, dan token Z tidak akan pernah cocok lagi. Pasangan `(run, attempts)` boleh saja berulang (misalnya setelah `Release`), tetapi tidak pernah untuk claim yang masih hidup. Untuk fencing, hanya itu yang penting.
 
 ### Lease hilang → handler dibatalkan: `(*Worker).process`
 
@@ -113,10 +146,10 @@ sequenceDiagram
     Note over W1: macet (GC pause / jaringan)
     R->>DB: Reap: locked_until < now() → retrying
     W2->>DB: Claim (locked_by=w2, attempts=2)
-    W1->>DB: Heartbeat WHERE locked_by=w1
+    W1->>DB: Heartbeat WHERE locked_by=w1 AND attempts=1
     DB-->>W1: 0 rows → ErrLeaseLost
     Note over W1: ctx dibatalkan, tidak menulis apa pun
-    W2->>DB: Complete WHERE locked_by=w2 → OK
+    W2->>DB: Complete WHERE locked_by=w2 AND attempts=2 → OK
 ```
 
 ## Apa yang terjadi kalau fitur ini dihapus?
@@ -131,7 +164,7 @@ sequenceDiagram
 |---|---|---|
 | Panjang lease | 30 s + heartbeat 10 s | Crash terdeteksi 30 s + `REAPER_INTERVAL` (15 s) kemudian. Lease lebih pendek berarti deteksi lebih cepat tetapi lebih rentan terhadap gangguan jaringan singkat. |
 | Biaya heartbeat | 1 `UPDATE` per job berjalan per 10 s | 1.000 job berjalan berarti ~100 UPDATE/s. Alternatif: satu heartbeat per *worker* (`UPDATE ... WHERE locked_by = $me`) untuk semua job sekaligus. |
-| Token fence | `locked_by` (ID worker) | Kleppmann menyarankan token yang **berubah setiap claim** (monoton naik). `locked_by` unik per proses (`hostname-acak`), sehingga cukup untuk membedakan worker yang berbeda. **Keterbatasan nyata:** kalau worker yang **sama** meng-claim ulang job yang lease-nya baru saja hilang (karena ia masih punya slot kosong), eksekusi lama dan baru sama-sama `locked_by = dia`, dan fence tidak bisa membedakannya. Komentar di `TestReaperTakeoverCancelsStaleWorker` ("hold w1's only slot so it cannot re-claim the job itself") menunjukkan test itu sengaja menghindari kasus ini. Perbaikannya: tambahkan nomor claim ke fence, misalnya `AND attempts = $n`, karena `attempts` naik di setiap claim. |
+| Token fence | `(locked_by, run, attempts)` dari hasil claim | Kleppmann menyarankan token yang **berubah setiap claim**. ForgeQ memakai ulang kolom yang sudah ada, karena `attempts` naik di setiap claim dan `run` di setiap retry manual, sehingga tidak perlu migrasi. Alternatifnya adalah kolom `lease_token BIGINT` yang hanya pernah naik. Itu lebih "murni" (tidak perlu argumen soal `Release` di atas), tetapi menambah kolom yang fungsinya sama. |
 | Jam | `now()` database untuk `locked_until` dan pengecekan reaper | Semua perbandingan lease memakai satu jam, sehingga clock skew antar-worker tidak berpengaruh ([13](13-clock-skew.md)). |
 | Batas perlindungan | Fence melindungi **state di database** | Fence **tidak** melindungi dunia luar. Email yang sudah terkirim oleh zombie tetap terkirim. Itulah sebabnya ForgeQ *at-least-once* ([06](06-at-least-once-idempotency.md)). |
 
@@ -143,11 +176,11 @@ Semua eksperimen di bawah dijalankan di branch sementara: `git switch -c coba/fe
 
 ### Eksperimen A: heartbeat tanpa fence
 
-Di `(*Store).Heartbeat`, ganti klausa `locked_by = $2` dengan sesuatu yang selalu benar. `$2` harus tetap dipakai, karena PostgreSQL menolak parameter yang tidak direferensikan:
+Di `(*Store).Heartbeat`, ganti `fenced` dengan klausa yang hanya memeriksa `id` dan `status`. `$2`–`$4` harus tetap dipakai, karena PostgreSQL menolak parameter yang tidak direferensikan:
 
 ```diff
--		WHERE id = $1 AND status = 'running' AND locked_by = $2`,
-+		WHERE id = $1 AND status = 'running' AND $2::text IS NOT NULL`,
+-		WHERE `+fenced, l.args(d.Milliseconds())...)
++		WHERE id = $1 AND status = 'running' AND $2::text IS NOT NULL AND $3::int IS NOT NULL AND $4::int IS NOT NULL`, l.args(d.Milliseconds())...)
 ```
 
 ```sh
@@ -157,7 +190,7 @@ go test -tags integration -count=1 -v -run '^(TestHeartbeatIsFenced|TestWorkerKe
 **Hasil yang diharapkan:**
 
 ```
-store_test.go:323: non-owner heartbeat: err = <nil>, want ErrLeaseLost
+store_test.go:379: non-owner heartbeat: err = <nil>, want ErrLeaseLost
 --- FAIL: TestHeartbeatIsFenced
 worker_test.go:141: stale worker's job was not cancelled
 --- FAIL: TestWorkerKeepsLeaseAliveAndStopsWhenTakenOver
@@ -197,7 +230,12 @@ Test integrasi itu menjalankan job dengan lease 1 detik selama 3 detik. Tanpa he
 
 ### Eksperimen C: `Complete` tanpa fence
 
-Di `(*Store).Complete`, lakukan penggantian yang sama (`locked_by = $2` → `$2::text IS NOT NULL`):
+Di `(*Store).Complete`, lakukan penggantian yang sama:
+
+```diff
+-		WHERE `+fenced, l.args()...)
++		WHERE id = $1 AND status = 'running' AND $2::text IS NOT NULL AND $3::int IS NOT NULL AND $4::int IS NOT NULL`, l.args()...)
+```
 
 ```sh
 go test -tags integration -count=1 -v -run '^TestCompleteIsFenced$' ./test/integration/
@@ -206,12 +244,41 @@ go test -tags integration -count=1 -v -run '^TestCompleteIsFenced$' ./test/integ
 **Hasil yang diharapkan:**
 
 ```
-store_test.go:172: Complete by non-owner: err = <nil>, want ErrLeaseLost
-store_test.go:178: Complete by owner: job lease lost
+store_test.go:175: Complete by non-owner: err = <nil>, want ErrLeaseLost
+store_test.go:181: Complete by owner: job lease lost
 --- FAIL: TestCompleteIsFenced
 ```
 
 Perhatikan baris kedua: "intruder" berhasil menyelesaikan job, sehingga **pemilik sah** malah ditolak.
+
+### Eksperimen D: fence hanya dengan `locked_by` (versi lama)
+
+Kembalikan fence ke versi awal ForgeQ, yang tidak memeriksa `run` dan `attempts`:
+
+```diff
+-const fenced = `id = $1 AND status = 'running' AND locked_by = $2 AND run = $3 AND attempts = $4`
++const fenced = `id = $1 AND status = 'running' AND locked_by = $2 AND $3::int IS NOT NULL AND $4::int IS NOT NULL`
+```
+
+```sh
+go test -tags integration -count=1 -v -run '^(TestWritesNeedTheWholeLease|TestSameWorkerReclaimCancelsStaleRun)$' ./test/integration/
+```
+
+**Hasil yang diharapkan** (dipersingkat; tiga baris `store_test.go` muncul sekali untuk setiap subtest yang gagal):
+
+```
+reaper_test.go:224: stale run was not cancelled: its heartbeat was accepted for the new claim
+--- FAIL: TestSameWorkerReclaimCancelsStaleRun
+store_test.go:226: Heartbeat: err = <nil>, want ErrLeaseLost
+store_test.go:229: Release: err = <nil>, want ErrLeaseLost
+store_test.go:238: Complete by the real owner afterwards: job lease lost
+--- FAIL: TestWritesNeedTheWholeLease
+    --- FAIL: TestWritesNeedTheWholeLease/older_attempt
+    --- FAIL: TestWritesNeedTheWholeLease/newer_attempt
+    --- FAIL: TestWritesNeedTheWholeLease/other_run
+```
+
+Subtest `other_worker` tetap lolos, karena `locked_by` masih diperiksa. Tiga subtest lainnya menunjukkan bahwa claim lain dari worker yang sama bisa memperpanjang lease dan me-`Release` job milik claim yang berlaku, sehingga pemilik sah ditolak. `Fail` dan `Complete` palsu tidak muncul sebagai error hanya karena `Release` dipanggil lebih dulu dan sudah mengubah status ke `pending`.
 
 Bersihkan: `git restore . && git switch main && git branch -D coba/fencing`.
 
@@ -222,11 +289,13 @@ Bersihkan: `git restore . && git switch main && git branch -D coba/fencing`.
 3. Jelaskan skenario "worker zombie" dan bagaimana fencing mencegah kerusakan data.
 4. Fencing sudah ada. Kenapa ForgeQ tetap tidak bisa menjamin *exactly-once*?
 5. Kenapa heartbeat dihentikan dan **ditunggu** (`<-hbDone`) sebelum memanggil `Complete`?
+6. Kenapa ID worker saja bukan fencing token yang cukup? Apa yang ForgeQ pakai sebagai gantinya, dan kenapa `Release` yang mengurangi `attempts` tidak merusaknya?
 
 ### Jawaban
 
 1. Lock biasa dipegang sampai dilepas secara eksplisit, atau sampai koneksi putus. Kalau pemegangnya mati tanpa memutus koneksi (hang), lock tertahan selamanya. Lease **kedaluwarsa sendiri** setelah waktu tertentu, sehingga sistem pulih tanpa intervensi. Di sistem terdistribusi kita tidak bisa membedakan "mati" dari "lambat", dan lease mengubah pertanyaan itu menjadi batas waktu yang eksplisit.
 2. Supaya beberapa heartbeat boleh gagal atau lambat tanpa kehilangan lease. Dengan 30 s / 10 s, dua heartbeat berturut-turut boleh gagal. Rasio 1:3 adalah aturan praktis yang umum. Rasio yang terlalu rapat (misalnya 1:1,2) membuat jitter jaringan biasa memicu pengambilalihan palsu.
-3. Worker A macet melewati lease-nya. Reaper memindahkan job ke `retrying`, dan worker B meng-claim-nya dengan `locked_by = B`. A bangun dan mencoba `Complete`/`Fail`/`Heartbeat`. Semua tulisan A menyertakan `AND locked_by = 'A'`, sehingga cocok 0 baris dan menghasilkan `ErrLeaseLost`. Status yang ditulis B tidak tersentuh. Di sisi worker, ctx handler A dibatalkan dengan cause `ErrLeaseLost` dan A tidak menulis apa pun lagi.
+3. Worker A macet melewati lease-nya. Reaper memindahkan job ke `retrying`, dan worker B meng-claim-nya dengan `locked_by = B`. A bangun dan mencoba `Complete`/`Fail`/`Heartbeat`. Semua tulisan A menyertakan lease A (`locked_by = 'A' AND attempts = 1`), sehingga cocok 0 baris dan menghasilkan `ErrLeaseLost`. Status yang ditulis B tidak tersentuh. Di sisi worker, ctx handler A dibatalkan dengan cause `ErrLeaseLost` dan A tidak menulis apa pun lagi.
 4. Fencing hanya menjaga tulisan ke **database ForgeQ**. Efek samping ke sistem luar (mengirim email, menagih kartu) terjadi **di dalam handler**, sebelum `Complete`. Kalau A sudah mengirim email lalu macet, B akan mengirimnya lagi. Fence tidak bisa menarik kembali email yang sudah terkirim. Solusinya adalah handler yang idempoten, misalnya dengan mengirim idempotency key ke penyedia email.
 5. Supaya tidak ada dua goroutine yang menulis ke baris job yang sama secara bersamaan. Kalau heartbeat masih jalan, `Heartbeat` bisa saja dieksekusi **setelah** `Complete`. Hasilnya aman karena fence (status sudah bukan `running`, jadi 0 baris), tetapi heartbeat akan melaporkan "lease lost" palsu dan log menjadi menyesatkan. Menunggu `hbDone` membuat urutannya deterministik: heartbeat selesai, baru hasil ditulis.
+6. Token harus membedakan setiap **claim**, bukan setiap worker. Worker yang macet bisa meng-claim ulang job yang baru saja hilang darinya, karena ia masih punya slot kosong. Kedua eksekusi lalu sama-sama `locked_by = dia`, sehingga heartbeat eksekusi lama memperpanjang lease eksekusi baru dan tidak pernah dibatalkan. ForgeQ memakai `(locked_by, run, attempts)` dari hasil claim, karena `attempts` naik di setiap claim dan `run` di setiap retry manual. `Release` hanya bisa dilakukan oleh claim yang sedang berlaku dan hanya membatalkan `+1` miliknya sendiri. Jadi setelah sebuah claim diambil reaper, `attempts` di baris `running` selalu lebih besar dari milik claim lama, dan token lama tidak pernah cocok lagi.
