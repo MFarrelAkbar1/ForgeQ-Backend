@@ -84,7 +84,7 @@ Perhatikan `err != nil &&`: handler yang **berhasil** walaupun shutdown sedang b
 UPDATE jobs
 SET status = 'pending', attempts = attempts - 1, run_at = now(),
     locked_by = NULL, locked_until = NULL, started_at = NULL, updated_at = now()
-WHERE id = $1 AND status = 'running' AND locked_by = $2   -- tetap di-fence
+WHERE id = $1 AND status = 'running' AND locked_by = $2 AND run = $3 AND attempts = $4   -- tetap di-fence
 RETURNING queue
 ```
 
