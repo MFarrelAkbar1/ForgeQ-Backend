@@ -140,8 +140,8 @@ go test -tags integration -count=1 -v -run '^TestRetryDeadKeepsHistory$' ./test/
 **Hasil yang diharapkan:**
 
 ```
-store_test.go:354: retry of pending job: err = <nil>, want ErrInvalidState
-store_test.go:380: history[1] = run 3 attempt 1 "boom again", want run 2 attempt 1 "boom again"
+store_test.go:410: retry of pending job: err = <nil>, want ErrInvalidState
+store_test.go:436: history[1] = run 3 attempt 1 "boom again", want run 2 attempt 1 "boom again"
 --- FAIL: TestRetryDeadKeepsHistory
 ```
 
@@ -157,8 +157,8 @@ Retry kedua (pada job yang sudah `pending`) diterima dan menaikkan `run` menjadi
 **Hasil yang diharapkan:**
 
 ```
-store_test.go:351: retried job = &{... Status:pending Run:1 Attempts:0 ...}, want pending on run 2 with attempts reset
-store_test.go:380: history[1] = run 1 attempt 1 "boom again", want run 2 attempt 1 "boom again"
+store_test.go:407: retried job = &{... Status:pending Run:1 Attempts:0 ...}, want pending on run 2 with attempts reset
+store_test.go:436: history[1] = run 1 attempt 1 "boom again", want run 2 attempt 1 "boom again"
 --- FAIL: TestRetryDeadKeepsHistory
 ```
 
